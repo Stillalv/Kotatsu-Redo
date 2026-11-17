@@ -120,13 +120,15 @@ jobs:
         run: |
           TAG="${INPUT_TAG:-$VERSION_NAME}"
           PARSERS_SHA=$(git -C parsers-repo rev-parse --short HEAD)
+          PARSERS_MSG=$(git -C parsers-repo log -1 --pretty=%s)
           BODY_FILE="${RUNNER_TEMP}/release-notes.md"
           cat > "$BODY_FILE" <<EOF
-          Custom side-by-side build of Kotatsu-Redo incorporating the revised \`DoujinDesuParser\` from [\`Stillalv/kotatsu-parsers-redo@${PARSERS_SHA}\`](https://github.com/Stillalv/kotatsu-parsers-redo/commit/${PARSERS_SHA}).
+          Custom side-by-side build of Kotatsu-Redo incorporating custom parsers from [\`Stillalv/kotatsu-parsers-redo@${PARSERS_SHA}\`](https://github.com/Stillalv/kotatsu-parsers-redo/commit/${PARSERS_SHA}): \`${PARSERS_MSG}\`.
 
           - **Package ID:** \`io.github.stillalv.kotatsu\` (installs side-by-side alongside official Kotatsu-Redo)
           - **App Name:** \`Kotatsu-Redo Custom\`
-          - **OTA Parsers Bundle:** Disabled (\`PARSERS_BUNDLE_KEY=none\`) so built-in parser fixes stay active
+          - **In-app Updates:** Points to \`Stillalv/Kotatsu-Redo\` releases
+          - **OTA Parsers Bundle:** Disabled (\`PARSERS_BUNDLE_KEY=none\`) so built-in custom parsers stay active
           EOF
           if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             gh release upload "$TAG" "$APK_FILE" --repo "${{ github.repository }}" --clobber
