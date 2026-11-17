@@ -45,8 +45,21 @@ jobs:
           if [ ! -x "$SDK_MANAGER" ]; then
             SDK_MANAGER=$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f | head -n 1)
           fi
-          yes | "$SDK_MANAGER" --licenses || true
-          "$SDK_MANAGER" "platform-tools" "platforms;android-37" "build-tools;35.0.0"
+          yes | "$SDK_MANAGER" --licenses > /dev/null 2>&1 || true
+          echo "Available Android 3x platforms:"
+          "$SDK_MANAGER" --list --channel=3 2>/dev/null | grep -E "platforms;android-3[567]|platforms;android-Cinnamon" || true
+          PLATFORM_PKG=$("$SDK_MANAGER" --list 2>/dev/null | grep -oE 'platforms;android-37(\.[0-9]+)?' | head -n 1 || true)
+          if [ -z "$PLATFORM_PKG" ]; then
+            PLATFORM_PKG=$("$SDK_MANAGER" --list --channel=3 2>/dev/null | grep -oE 'platforms;android-37(\.[0-9]+)?' | head -n 1 || true)
+          fi
+          if [ -n "$PLATFORM_PKG" ]; then
+            echo "Installing $PLATFORM_PKG"
+            "$SDK_MANAGER" --channel=3 "platform-tools" "build-tools;35.0.0" "$PLATFORM_PKG"
+          else
+            echo "No platforms;android-37* found via sdkmanager; installing base tools and letting AGP resolve SDK if cached/available"
+            "$SDK_MANAGER" "platform-tools" "build-tools;35.0.0"
+          fi
+          yes | "$SDK_MANAGER" --licenses > /dev/null 2>&1 || true
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
