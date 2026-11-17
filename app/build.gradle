@@ -51,7 +51,7 @@ android {
     }
 
     defaultConfig {
-		applicationId 'io.github.kotatsuredo.kotatsu'
+		applicationId 'io.github.stillalv.kotatsu'
 		minSdk = 23
 		targetSdk = 37
 		versionCode = 2049
@@ -96,13 +96,23 @@ android {
 		// `parsers_bundle_key` in local.properties or PARSERS_BUNDLE_URL and PARSERS_BUNDLE_KEY in the
 		// environment, or set the key to `none` to take no parsers from anywhere.
 		def parsersBundleUrl = readSecret('parsers_bundle_url', 'PARSERS_BUNDLE_URL')
-			?: 'https://github.com/Kotatsu-Redo/kotatsu-parsers-redo/releases/download/parsers-bundle'
-		def parsersBundleKey = readSecret('parsers_bundle_key', 'PARSERS_BUNDLE_KEY') ?: parsersBundlePublicKey
+			?: 'https://github.com/Stillalv/kotatsu-parsers-redo/releases/download/parsers-bundle'
+		def parsersBundleKey = readSecret('parsers_bundle_key', 'PARSERS_BUNDLE_KEY') ?: 'none'
 		if (parsersBundleKey == 'none') {
 			parsersBundleKey = ''
 		}
 		buildConfigField 'String', 'PARSERS_BUNDLE_URL', "\"${parsersBundleUrl}\""
 		buildConfigField 'String', 'PARSERS_BUNDLE_KEY', "\"${parsersBundleKey}\""
+	}
+	signingConfigs {
+		if (System.getenv('RELEASE_KEYSTORE_PATH')) {
+			release {
+				storeFile file(System.getenv('RELEASE_KEYSTORE_PATH'))
+				storePassword System.getenv('RELEASE_KEYSTORE_PASSWORD')
+				keyAlias System.getenv('RELEASE_KEY_ALIAS')
+				keyPassword System.getenv('RELEASE_KEY_PASSWORD')
+			}
+		}
 	}
 	buildTypes {
 		debug {
@@ -112,6 +122,9 @@ android {
 			minifyEnabled true
 			shrinkResources true
 			proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+			if (signingConfigs.findByName('release') != null) {
+				signingConfig signingConfigs.release
+			}
 		}
 		nightly {
 			initWith release
@@ -223,14 +236,8 @@ sentry {
 }
 
 dependencies {
-	def parsersVersion = libs.versions.parsers.get()
-	if (System.properties.containsKey('parsersVersionOverride')) {
-		// usage:
-		// -DparsersVersionOverride=$(curl -s https://api.github.com/repos/kotatsuapp/kotatsu-parsers/commits/master -H "Accept: application/vnd.github.sha" | cut -c -10)
-		parsersVersion = System.getProperty('parsersVersionOverride')
-	}
 	//noinspection UseTomlInstead
-	implementation("com.github.clquwu:kotatsu-parsers-redo:$parsersVersion") {
+	implementation('org.koitharu:kotatsu-parsers:1.0') {
 		exclude group: 'org.json', module: 'json'
 	}
 

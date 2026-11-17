@@ -7,6 +7,7 @@ on:
 
 jobs:
   discordNotification:
+    if: github.repository == 'Kotatsu-Redo/Kotatsu-Redo'
     runs-on: ubuntu-latest
     steps:
       - name: Build commit description

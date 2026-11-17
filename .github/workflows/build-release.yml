@@ -1,0 +1,129 @@
+name: Build and Release Custom APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag name (defaults to app versionName when left empty)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build-and-release:
+    name: Build & Publish Signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout app repository
+        uses: actions/checkout@v4
+        with:
+          path: app-repo
+
+      - name: Checkout revised parsers repository
+        uses: actions/checkout@v4
+        with:
+          repository: Stillalv/kotatsu-parsers-redo
+          ref: master
+          path: parsers-repo
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Set up Android SDK
+        run: |
+          SDK_MANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDK_MANAGER" ]; then
+            SDK_MANAGER=$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          fi
+          yes | "$SDK_MANAGER" --licenses || true
+          "$SDK_MANAGER" "platform-tools" "platforms;android-37" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Publish revised parsers to mavenLocal
+        working-directory: parsers-repo
+        run: |
+          chmod +x ./gradlew
+          ./gradlew publishToMavenLocal --no-daemon --stacktrace
+          ls -la "${HOME}/.m2/repository/org/koitharu/kotatsu-parsers/1.0/"
+
+      - name: Decode release keystore
+        env:
+          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          printf '%s' "$RELEASE_KEYSTORE_B64" | base64 -d > "${RUNNER_TEMP}/release.p12"
+          keytool -list \
+            -keystore "${RUNNER_TEMP}/release.p12" \
+            -storetype PKCS12 \
+            -storepass "$RELEASE_KEYSTORE_PASSWORD" \
+            -alias "$RELEASE_KEY_ALIAS"
+          echo "RELEASE_KEYSTORE_PATH=${RUNNER_TEMP}/release.p12" >> "$GITHUB_ENV"
+
+      - name: Build & verify release APK
+        working-directory: app-repo
+        env:
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          PARSERS_BUNDLE_KEY: none
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+          APK_PATH=$(find app/build/outputs/apk/release -maxdepth 2 -name "*.apk" ! -name "*unsigned*" | head -n 1)
+          echo "Built APK: $APK_PATH"
+          test -f "$APK_PATH"
+          "${ANDROID_HOME}/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK_PATH"
+          "${ANDROID_HOME}/build-tools/35.0.0/aapt2" dump badging "$APK_PATH" | grep -E "package:|application-label:"
+          VERSION_NAME=$(grep -m1 "versionName" app/build.gradle | sed -E "s/.*['\"]([^'\"]+)['\"].*/\1/")
+          OUT_APK="${RUNNER_TEMP}/kotatsu-redo-custom-${VERSION_NAME}.apk"
+          cp "$APK_PATH" "$OUT_APK"
+          echo "APK_FILE=${OUT_APK}" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=${VERSION_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kotatsu-redo-custom-apk
+          path: ${{ env.APK_FILE }}
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          TAG="${INPUT_TAG:-$VERSION_NAME}"
+          PARSERS_SHA=$(git -C parsers-repo rev-parse --short HEAD)
+          BODY_FILE="${RUNNER_TEMP}/release-notes.md"
+          cat > "$BODY_FILE" <<EOF
+          Custom side-by-side build of Kotatsu-Redo incorporating the revised \`DoujinDesuParser\` from [\`Stillalv/kotatsu-parsers-redo@${PARSERS_SHA}\`](https://github.com/Stillalv/kotatsu-parsers-redo/commit/${PARSERS_SHA}).
+
+          - **Package ID:** \`io.github.stillalv.kotatsu\` (installs side-by-side alongside official Kotatsu-Redo)
+          - **App Name:** \`Kotatsu-Redo Custom\`
+          - **OTA Parsers Bundle:** Disabled (\`PARSERS_BUNDLE_KEY=none\`) so built-in parser fixes stay active
+          EOF
+          if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$APK_FILE" --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "$TAG" "$APK_FILE" \
+              --repo "${{ github.repository }}" \
+              --title "Kotatsu-Redo Custom ${TAG}" \
+              --notes-file "$BODY_FILE"
+          fi
+
+      - name: Remove temporary keystore
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/release.p12"
